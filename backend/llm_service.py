@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 import google.generativeai as genai
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import re
 import logging
 
@@ -28,18 +28,19 @@ Output strict JSON with these keys:
 RULES FOR INTENTS:
 
 1. **MANAGE_TASK** (For Schedule/Calendar items):
-   - Trigger: "Add [Task]", "Complete [Task]", "Delete [Task]", "Remove [Task]", "Clear all tasks".
+   - Trigger: "Add [Task]", "Complete [Task]", "Delete [Task]", "Remove [Task]", "Clear all tasks", "Delete all tasks".
    - Action: "create", "complete", "delete", or "delete_all".
-   - Include "task_name" and "time" (24-hour HH:MM).
+   - Include "task_name", "time" (24-hour HH:MM), and "task_date" (YYYY-MM-DD).
+   - **DATE CALCULATION**: If user says "tomorrow" or "next week", calculate the "task_date" based on the CURRENT CONTEXT Time provided above.
    - If User says "Remove bathing", output action="delete", task_name="bathing".
-   - If User says "Clear today's list", output action="delete_all".
-   - **CRITICAL CONTEXT RULE**: If User replies with JUST a time (e.g., "11 pm", "at 9"), check the "RECENT CONVERSATION HISTORY". 
-     - Look at what the Agent (You) JUST asked. 
-     - If you asked "At what time would you like to schedule [Task]?", you MUST use THAT [Task] name.
+   - If User says "Clear today's list" or "Delete all tasks", output action="delete_all".
+   - **CRITICAL CONTEXT RULE 1**: If User replies with JUST a time (e.g., "11 pm", "at 9"), check the "RECENT CONVERSATION HISTORY". If you previously asked "At what time...?", use that context to finish the task creation.
+   - **CRITICAL CONTEXT RULE 2**: If the "RECENT CONVERSATION HISTORY" shows you just asked "What memory note would you like to add?", and the user replies with a sentence containing a time (e.g. "Meeting tomorrow at 9"), classify this as **SAVE_MEMORY**, NOT manage_task.
 
 2. **SAVE_MEMORY** (For Facts/Sticky Notes):
    - Trigger: "Note that...", "Remember that...", "Write down...", "My daughter visited today".
-   - **PRIORITY RULE**: If the user provides a specific time for an action (e.g., "Meeting at 2pm", "Lunch at 12"), classify this as 'manage_task' so it goes on the calendar, even if they say "remember" or "memory".
+   - **NEGATIVE CONSTRAINT**: Do NOT classify commands like "Delete tasks", "Clear list", or "Remove item" as save_memory. These are ALWAYS manage_task.
+   - **PRIORITY RULE**: Generally, if a user gives a time ("Meeting at 2pm"), classify it as 'manage_task' (calendar). **HOWEVER**, if the user explicitly requested to "save a note" or is replying to your question about notes, classify as "save_memory".
    - Action: "save".
    - Parameter "note_content": Extract the core fact (e.g., "User's daughter visited today").
 
@@ -53,12 +54,14 @@ RULES FOR INTENTS:
    - response_text: Confirming the action (e.g., "I will clear all your memory notes now.").
 
 5. **TIME FORMAT**: Convert all times to 24-hour HH:MM.
-
 """
 
 def get_ai_response(user_text, pending_tasks_list, recent_history):
     try:
-        current_time = datetime.now().strftime("%A, %I:%M %p")
+        utc_now = datetime.now(timezone.utc)
+        ist_now = utc_now + timedelta(hours=5, minutes=30)
+        current_time = ist_now.strftime("%A, %Y-%m-%d, %I:%M %p")
+        
         tasks_str = ", ".join([t['task_name'] for t in pending_tasks_list]) or "None"
         
         history_str = ""

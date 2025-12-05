@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import database as db
 import llm_service
 import memory_vector_service
@@ -15,16 +15,16 @@ class DementiaCompanion:
         
     def get_patient_name(self):
         conn = db.get_db_connection()
-        patient = conn.execute("SELECT name FROM patients WHERE id = ?", (self.patient_id,)).fetchone()
-        conn.close()
-        return patient['name'] if patient else "friend"
+        try:
+            patient = conn.execute("SELECT name FROM patients WHERE id = ?", (self.patient_id,)).fetchone()
+            return patient['name'] if patient else "friend"
+        finally:
+            conn.close()
     
     def process_input(self, user_speech):
         try:
             # 1. Gather Real-time Context
             pending_tasks = [t for t in db.get_all_tasks(self.patient_id) if not t['completed']]
-            
-            # We get the last 3 turns for context
             recent_history = db.get_recent_conversations(self.patient_id, limit=3)
             
             # 2. Router: Ask LLM what the user wants
@@ -66,11 +66,17 @@ class DementiaCompanion:
         action = params.get("action") 
         target_task = params.get("task_name")
         time_param = params.get("time")
+        date_param = params.get("task_date")
+
+        # FIX: Ensure we have a date (Default to IST Today if missing)
+        if not date_param:
+            utc_now = datetime.now(timezone.utc)
+            ist_now = utc_now + timedelta(hours=5, minutes=30)
+            date_param = ist_now.strftime("%Y-%m-%d")
 
         # 1. COMPLETION LOGIC
         if action == "complete" and target_task:
             task_exists = any(t['task_name'].lower() == target_task.lower() for t in pending_tasks)
-            
             if task_exists:
                 db_task_name = next((t['task_name'] for t in pending_tasks if t['task_name'].lower() == target_task.lower()), target_task)
                 db.mark_task_completed(self.patient_id, db_task_name)
@@ -84,6 +90,7 @@ class DementiaCompanion:
                 return f"At what time would you like to schedule {target_task.replace('_', ' ')}?"
             
             if target_task and time_param:
+                # Basic time cleaning
                 try:
                     clean_time = time_param.lower().replace("pm","").replace("am","").strip()
                     if ":" not in clean_time:
@@ -94,16 +101,24 @@ class DementiaCompanion:
                 except:
                     time_param = "12:00" 
 
-                success = db.create_task(self.patient_id, target_task, time_param)
+                success = db.create_task(self.patient_id, target_task, time_param, task_date=date_param)
+                
+                date_msg = "today"
+                utc_now = datetime.now(timezone.utc)
+                ist_today = (utc_now + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
+                
+                if date_param != ist_today:
+                    date_msg = f"on {date_param}"
+
                 if success:
-                    return f"Okay, I've added {target_task.replace('_', ' ')} for {time_param}."
+                    return f"Okay, I've added {target_task.replace('_', ' ')} for {time_param} {date_msg}."
                 else:
                     return f"You already have {target_task} on your list."
 
-        # 3. DELETION LOGIC (SINGLE TASK)
+        # 3. DELETION LOGIC
         elif action == "delete" and target_task:
             db_task_name = next((t['task_name'] for t in pending_tasks if t['task_name'].lower() == target_task.lower()), target_task)
-            success = db.delete_task(self.patient_id, db_task_name)
+            success = db.delete_task(self.patient_id, db_task_name, task_date=date_param)
             if success:
                 return f"I have removed {target_task.replace('_', ' ')} from your schedule."
             else:
@@ -111,17 +126,44 @@ class DementiaCompanion:
 
         # 4. DELETE ALL TASKS
         elif action == "delete_all":
-            db.delete_all_tasks(self.patient_id)
-            return "I have cleared all your scheduled tasks for today."
+            count = db.delete_all_tasks(self.patient_id, task_date=date_param)
+            if count > 0:
+                return "I have cleared all your scheduled tasks for that day."
+            return "Your task list is already empty for that day."
 
         return response_text
 
     def _handle_memory_save(self, user_speech, response_text, params):
-        note_content = params.get("note_content") or user_speech
+        note_content = params.get("note_content")
         
+        # 1. Define Forbidden Trigger Phrases
+        triggers = [
+            "add a memory note", "add a note", "save a note", "save memory", 
+            "take a note", "remember something", "write this down", "note", 
+            "create a note", "make a note", "add note"
+        ]
+        
+        # 2. Check strictly
+        is_invalid = False
+        
+        if not note_content:
+            is_invalid = True
+        else:
+            # Clean punctuation and lowercase
+            cleaned_content = note_content.lower().strip().replace(".", "")
+            if cleaned_content in triggers:
+                is_invalid = True
+                
+        # 3. If invalid, ASK THE USER instead of saving
+        if is_invalid:
+            return "Okay, what specific memory note would you like to add?"
+
+        # 4. If valid, save it
+        final_content = note_content if note_content else user_speech
+
         # SQL Log
         reminder_time = params.get("due_datetime")
-        db.add_memory_note(self.patient_id, note_content, reminder_time)
+        db.add_memory_note(self.patient_id, final_content, reminder_time)
         
         # Vector Store
         metadata = {
@@ -129,9 +171,9 @@ class DementiaCompanion:
             "date": datetime.now().isoformat(),
             "type": "general_note"
         }
-        memory_vector_service.save_vector_memory(note_content, metadata)
+        memory_vector_service.save_vector_memory(final_content, metadata)
         
-        return response_text
+        return f"Okay, I've saved that note: {final_content}"
 
     def _handle_memory_recall(self, user_query):
         found_notes = memory_vector_service.search_similar_memories(user_query)
@@ -145,13 +187,18 @@ class DementiaCompanion:
 
     def _handle_memory_delete(self, response_text):
         """Deletes ALL memory notes."""
-        db.delete_all_memory_notes(self.patient_id)
+        
+        # 1. Delete from SQLite and get count
+        deleted_count = db.delete_all_memory_notes(self.patient_id)
+        
+        # 2. Delete from Vector DB
         memory_vector_service.delete_patient_memories(self.patient_id)
-        return response_text
-
-    # ------------------------------------------------------------------
-    # UTILITIES
-    # ------------------------------------------------------------------
+        
+        # 3. Return explicit confirmation
+        if deleted_count > 0:
+            return f"I have cleared your memory. {deleted_count} notes were removed."
+        else:
+            return "Your memory notes are already empty."
 
     def check_missed_tasks(self):
         tasks = db.get_all_tasks(self.patient_id)
