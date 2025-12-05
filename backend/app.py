@@ -1,3 +1,4 @@
+from asyncio.log import logger
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
@@ -96,6 +97,33 @@ def get_notes():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/notes/<int:note_id>', methods=['DELETE'])
+def delete_note(note_id):
+    try:
+        patient_id = db.get_patient_id()
+        success = db.delete_note_by_id(patient_id, note_id)
+
+        if success:
+            return jsonify({'message': 'Note deleted successfully'}), 200
+        return jsonify({'error': 'Note not found'}), 404
+    except Exception as e:
+        logger.error(f"Error deleting note: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/notes/all', methods=['DELETE'])
+def delete_all_notes():
+    try:
+        patient_id = db.get_patient_id()
+        count = db.delete_all_memory_notes(patient_id)
+
+        return jsonify({
+            'message': f'Deleted {count} notes',
+            'count': count
+        }), 200
+    except Exception as e:
+        logger.error(f"Error deleting all notes: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/caregiver-alert', methods=['GET'])
 def caregiver_alert():
     try:
@@ -150,6 +178,35 @@ def update_task(task_id):
         return jsonify({'success': True})
         
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
+@app.route('/api/tasks/<int:task_id>', methods=['DELETE'])
+def delete_task(task_id):
+    try:
+        patient_id = db.get_patient_id()
+        success = db.delete_task_by_id(patient_id, task_id)
+
+        if success:
+            return jsonify({'message': 'Task deleted successfully'}), 200
+        return jsonify({'error': 'Task not found'}), 404
+    except Exception as e:
+        logger.error(f"Error deleting task: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/tasks/all', methods=['DELETE'])
+def delete_all_tasks():
+    try:
+        patient_id = db.get_patient_id()
+        task_date = request.args.get('date')  # Optional date filter
+
+        count = db.delete_all_tasks(patient_id, task_date=task_date)
+
+        return jsonify({
+            'message': f'Deleted {count} tasks',
+            'count': count
+        }), 200
+    except Exception as e:
+        logger.error(f"Error deleting all tasks: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':

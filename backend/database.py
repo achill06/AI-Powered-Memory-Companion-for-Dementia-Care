@@ -16,7 +16,12 @@ def get_db_connection():
 def init_database():
     conn = get_db_connection()
     try:
-        with open('schema.sql', 'r') as f:
+        schema_path = os.path.join(os.path.dirname(__file__), 'schema.sql')
+
+        if not os.path.exists(schema_path):
+            raise FileNotFoundError(f"schema.sql not found at {schema_path}")
+
+        with open(schema_path, 'r') as f:
             conn.executescript(f.read())
         
         cursor = conn.cursor()
@@ -267,3 +272,66 @@ def delete_all_tasks(patient_id, task_date=None):
     finally:
         if conn:
             conn.close()
+
+def delete_task_by_id(patient_id, task_id):
+    """
+    Deletes a task by its ID.
+    Returns: Boolean (True if deleted, False otherwise)
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        with conn:
+            cursor.execute(
+                "DELETE FROM tasks WHERE id = ? AND patient_id = ?",
+                (task_id, patient_id)
+            )
+            rows_affected = cursor.rowcount
+        logger.info(f"Deleted task {task_id} for patient {patient_id}")
+        return rows_affected > 0
+    except sqlite3.Error as e:
+        logger.error(f"Database error in delete_task_by_id: {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def delete_note_by_id(patient_id, note_id):
+    """
+    Deletes a specific note by ID.
+    Returns: Boolean (True if deleted, False otherwise)
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        with conn:
+            cursor.execute(
+                "DELETE FROM memory_notes WHERE id = ? AND patient_id = ?",
+                (note_id, patient_id)
+            )
+            rows_affected = cursor.rowcount
+        logger.info(f"Deleted note {note_id} for patient {patient_id}")
+        return rows_affected > 0
+    except sqlite3.Error as e:
+        logger.error(f"Database error in delete_note_by_id: {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def get_task_by_id(task_id, patient_id):
+    """
+    Retrieves a single task by ID.
+    Returns: Dict or None
+    """
+    conn = get_db_connection()
+    try:
+        task = conn.execute(
+            "SELECT * FROM tasks WHERE id = ? AND patient_id = ?",
+            (task_id, patient_id)
+        ).fetchone()
+        return dict(task) if task else None
+    finally:
+        conn.close()
