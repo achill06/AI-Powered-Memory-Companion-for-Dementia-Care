@@ -41,6 +41,26 @@ def get_patient_id():
     patient = conn.execute("SELECT id FROM patients LIMIT 1").fetchone()
     conn.close()
     return patient['id'] if patient else None
+def create_task(patient_id, task_name, scheduled_time):
+    conn = get_db_connection()
+    today = date.today().isoformat()
+    
+    existing = conn.execute(
+        "SELECT id FROM tasks WHERE patient_id = ? AND task_name = ? AND date = ?",
+        (patient_id, task_name, today)
+    ).fetchone()
+    
+    if not existing:
+        conn.execute(
+            "INSERT INTO tasks (patient_id, task_name, scheduled_time, date, completed) VALUES (?, ?, ?, ?, 0)",
+            (patient_id, task_name, scheduled_time, today)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    
+    conn.close()
+    return False
 
 def get_all_tasks(patient_id):
     conn = get_db_connection()
@@ -57,7 +77,7 @@ def mark_task_completed(patient_id, task_name):
     today = date.today().isoformat()
     conn.execute(
         "UPDATE tasks SET completed = 1, completed_at = ? WHERE patient_id = ? AND task_name = ? AND date = ?",
-        (datetime.now(), patient_id, task_name, today)
+        (datetime.now().isoformat(), patient_id, task_name, today)
     )
     conn.commit()
     conn.close()
@@ -115,3 +135,48 @@ def get_recent_caller(patient_id):
     ).fetchone()
     conn.close()
     return dict(call) if call else None
+
+def update_task_status(task_id, is_completed):
+    conn = get_db_connection()
+    
+    completed_int = 1 if is_completed else 0
+    completed_at = datetime.now().isoformat() if is_completed else None
+    
+    conn.execute(
+        "UPDATE tasks SET completed = ?, completed_at = ? WHERE id = ?",
+        (completed_int, completed_at, task_id)
+    )
+    conn.commit()
+    conn.close()
+
+def delete_all_memory_notes(patient_id):
+    conn = get_db_connection()
+    conn.execute("DELETE FROM memory_notes WHERE patient_id = ?", (patient_id,))
+    conn.commit()
+    conn.close()
+
+def delete_task(patient_id, task_name):
+    """Deletes a specific task by name (fuzzy match handled in engine, exact here)"""
+    conn = get_db_connection()
+    today = date.today().isoformat()
+    
+    # We delete based on name and date (today)
+    conn.execute(
+        "DELETE FROM tasks WHERE patient_id = ? AND task_name = ? AND date = ?",
+        (patient_id, task_name, today)
+    )
+    changes = conn.total_changes
+    conn.commit()
+    conn.close()
+    return changes > 0
+
+def delete_all_tasks(patient_id):
+    """Clears all tasks for today"""
+    conn = get_db_connection()
+    today = date.today().isoformat()
+    conn.execute(
+        "DELETE FROM tasks WHERE patient_id = ? AND date = ?",
+        (patient_id, today)
+    )
+    conn.commit()
+    conn.close()

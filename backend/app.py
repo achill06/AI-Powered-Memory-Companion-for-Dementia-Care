@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
-import asyncio
 from dotenv import load_dotenv
 
 import database as db
@@ -10,6 +9,10 @@ from murf_service import generate_speech
 from deepgram_service import transcribe_audio
 
 load_dotenv()
+required_keys = ['FLASK_SECRET_KEY', 'DEEPGRAM_API_KEY', 'MURF_API_KEY', 'GOOGLE_API_KEY']
+missing = [k for k in required_keys if not os.getenv(k)]
+if missing:
+    raise EnvironmentError(f"Missing API keys: {missing}")
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY')
@@ -20,32 +23,55 @@ db.init_database()
 @app.route('/api/chat', methods=['POST'])
 def chat():
     try:
-        audio_file = request.files.get('audio')
-        if not audio_file:
-            return jsonify({'error': 'No audio file provided'}), 400
+        user_text = None
         
-        audio_data = audio_file.read()
+        # 1. Check for Text Input (JSON)
+        if request.is_json:
+            data = request.get_json()
+            user_text = data.get('message')
+            if not user_text:
+                return jsonify({'error': 'No message provided'}), 400
+
+        # 2. Check for Audio Input ]
+        elif 'audio' in request.files:
+            audio_file = request.files['audio']
+            audio_data = audio_file.read()
+            # Transcribe
+            user_text = transcribe_audio(audio_data) # 
+            
+            if user_text is None:
+                # Handle transcription failure
+                response_text = "I didn't catch that clearly. Could you say it again?"
+                audio_base64 = generate_speech(response_text)
+                return jsonify({
+                    'transcript': "",
+                    'response': response_text,
+                    'audio': audio_base64
+                })
         
+        else:
+            return jsonify({'error': 'Invalid content type. Send JSON or Audio file.'}), 400
+
+        # 3. Process the Input 
         patient_id = db.get_patient_id()
         if not patient_id:
             return jsonify({'error': 'Patient not found'}), 404
-        
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        user_text = loop.run_until_complete(transcribe_audio(audio_data))
-        loop.close()
-        
+
         companion = DementiaCompanion(patient_id)
+        
+        # Pass the text to the engine 
         response_text = companion.process_input(user_text)
         
+        # Save to DB 
         db.save_conversation(patient_id, user_text, response_text)
         
+        # Generate Audio response 
         audio_base64 = generate_speech(response_text)
         
         return jsonify({
             'transcript': user_text,
-            'response': response_text,
-            'audio': audio_base64
+            'response': response_text, 
+            'audio': audio_base64      
         })
     
     except Exception as e:
@@ -85,6 +111,15 @@ def caregiver_alert():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/history', methods=['GET'])
+def get_history():
+    try:
+        patient_id = db.get_patient_id()
+        history = db.get_recent_conversations(patient_id, limit=10) 
+        return jsonify(history)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/record-call', methods=['POST'])
 def record_call():
     try:
@@ -98,6 +133,22 @@ def record_call():
         db.record_contact_call(patient_id, caller_name)
         
         return jsonify({'message': 'Call recorded successfully'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
+@app.route('/api/tasks/<int:task_id>', methods=['PUT'])
+def update_task(task_id):
+    try:
+        data = request.json
+        # Check if 'completed' is provided in the JSON body
+        if 'completed' not in data:
+            return jsonify({'error': 'Missing completed status'}), 400
+
+        # Call the new database function
+        db.update_task_status(task_id, data['completed'])
+        
+        return jsonify({'success': True})
+        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
