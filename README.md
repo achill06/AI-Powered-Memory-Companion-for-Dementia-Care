@@ -24,6 +24,8 @@ KAYA is a voice-activated memory assistant designed for patients with early-stag
 - **Caregiver Alerts:** Automatic notifications for missed tasks
 - **Low Latency:** Optimized Murf Falcon integration for natural conversation flow
 
+![App Screenshot](./images/screenshot.png)
+
 ## Setup
 
 ### Prerequisites
