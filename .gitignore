@@ -1,8 +1,0 @@
-backend/.env
-backend/__pycache__/
-backend/*.db
-backend/*.sqlite
-*.pyc
-.DS_Store
-node_modules/
-venv/
