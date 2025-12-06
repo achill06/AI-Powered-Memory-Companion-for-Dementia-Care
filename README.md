@@ -1,7 +1,9 @@
 # KAYA - AI-Powered Memory Companion for Dementia Care
 
 **Techfest IIT Bombay x Murf Voice Agent Hackathon 2025-26**  
-**Team:** AFEEFA M T & AZIL SYED E K
+**Team:** AFEEFA M T & AZIL SYED E K  
+
+![App Screenshot](application_interface.png)  
 
 ## Overview
 
@@ -23,8 +25,6 @@ KAYA is a voice-activated memory assistant designed for patients with early-stag
 - **Smart Scheduling:** Natural language task parsing ("Remind me to take medicine at 9 AM")
 - **Caregiver Alerts:** Automatic notifications for missed tasks
 - **Low Latency:** Optimized Murf Falcon integration for natural conversation flow
-
-![App Screenshot](application_interface.png)
 
 ## Setup
 
