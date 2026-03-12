@@ -116,11 +116,6 @@ Access at: `http://localhost:8000`
 4. Murf Falcon converts text to natural speech
 5. Audio streamed back to user
 
-
-## Contact
-
-**GitHub:** [AZIL SYED E K](https://github.com/achill06), [AFEEFA M T](https://github.com/AFEEFAMT)
-
 ---
 
 *Built with care for dementia patients and caregivers*
